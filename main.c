@@ -9,7 +9,16 @@
 #define TOKEN_DELIM " \t\n\r"
 #define EXIT_ALLOCATION_FAILURE 1
 #define EXIT_FORKING_FAILURE 2
+#define EXIT_OPEN_FAILURE 3
 
+#define ITALIC "\x1b[3m"
+#define RED "\x1b[0;31m"
+#define BLUE "\x1b[0;34m"
+#define GREEN "\x1b[0;32m"
+#define BOLD "\x1b[1m"
+#define RESET "\x1b[0m"
+
+void shell(const char* username);
 char* read_line(void);
 char** split_line(char* line);
 int my_system(char* const command);
@@ -18,13 +27,14 @@ void find(char** args);
 void tee(char** args);
 void watch(char** args);
 int login(char* const user, char* const password);
+char* login_handler(void);
 
-void shell(void) {
+void shell(const char* username) {
     char *line;
     int status;
 
     do {
-        printf("> ");
+        printf(BOLD GREEN "%s" RESET "@" BLUE "myshell" RESET BOLD "> " RESET, username);
         line = read_line();
         status = my_system(line);
 
@@ -40,7 +50,7 @@ char* read_line(void) {
     int c;
 
     if (!buffer) {
-        fprintf(stderr, "[sh]: allocation error\n");
+        fprintf(stderr, RED "[sh]: allocation error\n" RESET);
         exit(EXIT_ALLOCATION_FAILURE);
     }
 
@@ -58,7 +68,7 @@ char* read_line(void) {
             bufsize += LINE_BUFSIZE;
             buffer = realloc(buffer, bufsize);
             if (!buffer) {
-                fprintf(stderr, "[sh]: allocation error\n");
+                fprintf(stderr, RED "[sh]: allocation error\n" RESET);
                 exit(EXIT_ALLOCATION_FAILURE);
             }
         }
@@ -72,7 +82,7 @@ char** split_line(char* line) {
     char* token;
 
     if (!tokens) {
-        fprintf(stderr, "[sh]: allocation error\n");
+        fprintf(stderr, RED "[sh]: allocation error\n" RESET);
         exit(EXIT_ALLOCATION_FAILURE);
     }
 
@@ -85,7 +95,7 @@ char** split_line(char* line) {
             bufsize += TOKEN_BUFSIZE;
             tokens = realloc(tokens, bufsize * sizeof(char*));
             if (!tokens) {
-                fprintf(stderr, "[sh]: allocation error\n");
+                fprintf(stderr, RED "[sh]: allocation error\n" RESET);
                 exit(EXIT_ALLOCATION_FAILURE);
             }
         }
@@ -115,7 +125,7 @@ int my_system(char * const command){
             watch(args);
         }
     }else if (pid < 0) {
-        fprintf(stderr, "[sh]: fork error\n");
+        fprintf(stderr, RED "[sh]: fork error\n" RESET);
         exit(EXIT_FORKING_FAILURE);
     }else {
         do {
@@ -127,8 +137,83 @@ int my_system(char * const command){
     return 1;
 }
 
-int login(char * const user, char * const password){
-   
+void read_lines_from_file(const char* filename, char users[][LINE_BUFSIZE], char passwords[][LINE_BUFSIZE], int* user_count) {
+    FILE *file = fopen(filename, "r");
+
+    if (file == NULL) {
+        fprintf(stderr, RED "[sh]: open file error\n" RESET);
+        exit(EXIT_OPEN_FAILURE);
+    }
+    
+    char buffer[LINE_BUFSIZE];
+    *user_count = 0;
+    
+    while (fgets(buffer, LINE_BUFSIZE, file)) {
+        buffer[strcspn(buffer, "\n")] = 0;
+        
+        char* username = strtok(buffer, " ");
+        char* password = strtok(NULL, " ");
+        
+        if (username && password) {
+            strncpy(users[*user_count], username, LINE_BUFSIZE - 1);
+            strncpy(passwords[*user_count], password, LINE_BUFSIZE - 1);
+            users[*user_count][LINE_BUFSIZE - 1] = '\0';
+            passwords[*user_count][LINE_BUFSIZE - 1] = '\0';
+            (*user_count)++;
+        }
+    }
+    
+    fclose(file);
+}
+
+int login(char* const user, char* const password) {
+    char users[100][LINE_BUFSIZE];    
+    char passwords[100][LINE_BUFSIZE]; 
+    int user_count = 0;
+    
+    read_lines_from_file("users.txt", users, passwords, &user_count);
+    
+    for (int i = 0; i < user_count; i++) {
+        if (strcmp(users[i], user) == 0) {
+            if (strcmp(passwords[i], password) == 0) {
+                return 1;
+            }
+            return 0;
+        }
+    }
+    
+    return 0;
+}
+
+char* login_handler(void) {
+    char username[LINE_BUFSIZE];
+    char passwd[LINE_BUFSIZE];
+    char* logged_user = malloc(sizeof(char) * LINE_BUFSIZE);
+
+    if (!logged_user) {
+        fprintf(stderr, RED "[sh]: allocation error\n" RESET);
+        exit(EXIT_ALLOCATION_FAILURE);
+    }
+
+    while (1) {
+        printf(ITALIC "Username: " RESET);
+        if (fgets(username, LINE_BUFSIZE, stdin) != NULL) {
+            username[strcspn(username, "\n")] = 0;
+        }
+
+        printf(ITALIC "Password: " RESET);
+        if (fgets(passwd, LINE_BUFSIZE, stdin) != NULL) {
+            passwd[strcspn(passwd, "\n")] = 0;
+        }
+
+        if (login(username, passwd)) {
+            strcpy(logged_user, username);
+            printf( GREEN "Login successful! Welcome %s!\n" RESET, username);
+            return logged_user;
+        } else {
+            printf(RED "Login failed! Please try again.\n" RESET);
+        }
+    }
 }
 
 void chmod(char** args) {
@@ -153,6 +238,8 @@ void watch(char** args) {
 }
 
 int main(int argc, char *argv[], char *env[]) {
-    shell();
+    char* username = login_handler();
+    shell(username);
+    free(username);
     return 0;
 }
