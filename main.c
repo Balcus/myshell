@@ -3,7 +3,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 
+#define PIPE_READ 0
+#define PIPE_WRITE 1
 #define LINE_BUFSIZE 1024
 #define TOKEN_BUFSIZE 64
 #define TOKEN_DELIM " \t\n\r"
@@ -18,6 +21,7 @@
 #define BOLD "\x1b[1m"
 #define RESET "\x1b[0m"
 
+void echo(char** args);
 void shell(const char* username);
 char* read_line(void);
 char** split_line(char* line);
@@ -28,6 +32,7 @@ void tee(char** args);
 void watch(char** args);
 int login(char* const user, char* const password);
 char* login_handler(void);
+int handle_pipe(char* command);
 
 void shell(const char* username) {
     char *line;
@@ -105,11 +110,13 @@ char** split_line(char* line) {
     return tokens;
 }
 
+int my_system(char* const command) {
 
+    if (handle_pipe(command)) {
+        return 1;
+    }
 
-int my_system(char * const command){
     char** args = split_line(command);
-
     pid_t pid, wpid;
     int status;
 
@@ -117,20 +124,23 @@ int my_system(char * const command){
     if (pid == 0) {
         if (strcmp(args[0], "chmod") == 0) {
             chmod(args);
-        }else if(strcmp(args[0], "find") == 0) {
+        } else if(strcmp(args[0], "find") == 0) {
             find(args);
-        }else if(strcmp(args[0], "tee") == 0) {
+        } else if(strcmp(args[0], "tee") == 0) {
             tee(args);
-        }else if(strcmp(args[0], "watch") == 0) {
+        } else if(strcmp(args[0], "watch") == 0) {
             watch(args);
+        } else if(strcmp(args[0], "echo") == 0) {
+            echo(args);
         }
-    }else if (pid < 0) {
+        exit(0);
+    } else if (pid < 0) {
         fprintf(stderr, RED "[sh]: fork error\n" RESET);
         exit(EXIT_FORKING_FAILURE);
-    }else {
+    } else {
         do {
             wpid = waitpid(pid, &status, WUNTRACED);
-        }while (!WIFEXITED(status) && !WIFSIGNALED(status));
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
     }
 
     free(args);
@@ -144,16 +154,16 @@ void read_lines_from_file(const char* filename, char users[][LINE_BUFSIZE], char
         fprintf(stderr, RED "[sh]: open file error\n" RESET);
         exit(EXIT_OPEN_FAILURE);
     }
-    
+
     char buffer[LINE_BUFSIZE];
     *user_count = 0;
-    
+
     while (fgets(buffer, LINE_BUFSIZE, file)) {
         buffer[strcspn(buffer, "\n")] = 0;
-        
+
         char* username = strtok(buffer, " ");
         char* password = strtok(NULL, " ");
-        
+
         if (username && password) {
             strncpy(users[*user_count], username, LINE_BUFSIZE - 1);
             strncpy(passwords[*user_count], password, LINE_BUFSIZE - 1);
@@ -162,17 +172,17 @@ void read_lines_from_file(const char* filename, char users[][LINE_BUFSIZE], char
             (*user_count)++;
         }
     }
-    
+
     fclose(file);
 }
 
 int login(char* const user, char* const password) {
-    char users[100][LINE_BUFSIZE];    
-    char passwords[100][LINE_BUFSIZE]; 
+    char users[100][LINE_BUFSIZE];
+    char passwords[100][LINE_BUFSIZE];
     int user_count = 0;
-    
+
     read_lines_from_file("users.txt", users, passwords, &user_count);
-    
+
     for (int i = 0; i < user_count; i++) {
         if (strcmp(users[i], user) == 0) {
             if (strcmp(passwords[i], password) == 0) {
@@ -181,7 +191,7 @@ int login(char* const user, char* const password) {
             return 0;
         }
     }
-    
+
     return 0;
 }
 
@@ -230,7 +240,133 @@ void find(char** args) {
 }
 
 void tee(char** args) {
-    printf("tee\n");
+    int append_mode = 0;
+    int print_help = 0;
+    char buffer[LINE_BUFSIZE];
+    FILE* files[TOKEN_BUFSIZE];
+    int file_count = 0;
+
+    for (int i = 1; args[i] != NULL; i++) {
+        if (args[i][0] == '-') {
+            if (args[i][1] == '-') {
+                if (strcmp(args[i], "--help") == 0) {
+                    print_help = 1;
+                } else {
+                    fprintf(stderr, RED "[sh]: Unknown option %s\n" RESET, args[i]);
+                    return;
+                }
+            } else {
+                for (int j = 1; args[i][j] != '\0'; j++) {
+                    switch (args[i][j]) {
+                        case 'a':
+                            append_mode = 1;
+                            break;
+                        default:
+                            fprintf(stderr, RED "[sh]: Unknown option -%c\n" RESET, args[i][j]);
+                            return;
+                    }
+                }
+            }
+        } else {
+            files[file_count] = fopen(args[i], append_mode ? "a" : "w");
+            if (files[file_count] == NULL) {
+                fprintf(stderr, RED "[sh]: Cannot open file %s\n" RESET, args[i]);
+                continue;
+            }
+            file_count++;
+        }
+    }
+
+    if (print_help) {
+        printf("Usage: tee [OPTION]... [FILE]...\n");
+        printf("Copy standard input to each FILE, and also to standard output.\n\n");
+        printf("  -a, --append              append to the given FILEs, do not overwrite\n");
+        printf("  --help                    display this help and exit\n");
+        return;
+    }
+
+    while (fgets(buffer, LINE_BUFSIZE, stdin) != NULL) {
+        printf("%s", buffer);
+
+        for (int i = 0; i < file_count; i++) {
+            fputs(buffer, files[i]);
+        }
+    }
+
+    for (int i = 0; i < file_count; i++) {
+        fclose(files[i]);
+    }
+}
+
+
+void echo(char** args) {
+    for(int i = 1; args[i] != NULL; i++) {
+        printf("%s", args[i]);
+        if (args[i + 1] != NULL) {
+            printf(" ");
+        }
+    }
+    printf("\n");
+}
+
+int handle_pipe(char* command) {
+    char* commands[2];
+    char* pipe_pos = strchr(command, '|');
+
+    if (pipe_pos == NULL) {
+        return 0;
+    }
+
+    *pipe_pos = '\0';
+    commands[0] = command;
+    commands[1] = pipe_pos + 1;
+
+    while (*commands[1] == ' ') commands[1]++;
+
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        fprintf(stderr, RED "[sh]: pipe creation failed\n" RESET);
+        return 0;
+    }
+
+    pid_t pid1 = fork();
+    if (pid1 == 0) {
+        close(pipefd[PIPE_READ]);
+        dup2(pipefd[PIPE_WRITE], STDOUT_FILENO);
+        close(pipefd[PIPE_WRITE]);
+
+        char** args = split_line(commands[0]);
+        if (strcmp(args[0], "echo") == 0) {
+            echo(args);
+        } else if (strcmp(args[0], "tee") == 0) {
+            tee(args);
+        }
+        free(args);
+        exit(0);
+    }
+
+    pid_t pid2 = fork();
+    if (pid2 == 0) {
+        close(pipefd[PIPE_WRITE]);
+        dup2(pipefd[PIPE_READ], STDIN_FILENO);
+        close(pipefd[PIPE_READ]);
+
+        char** args = split_line(commands[1]);
+        if (strcmp(args[0], "echo") == 0) {
+            echo(args);
+        } else if (strcmp(args[0], "tee") == 0) {
+            tee(args);
+        }
+        free(args);
+        exit(0);
+    }
+
+    close(pipefd[PIPE_READ]);
+    close(pipefd[PIPE_WRITE]);
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
+
+    return 1;
 }
 
 void watch(char** args) {
