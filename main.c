@@ -1,9 +1,13 @@
 #include <stdio.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/types.h> 
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <errno.h>
+#include <fcntl.h>
 
 #define PIPE_READ 0
 #define PIPE_WRITE 1
@@ -26,7 +30,7 @@ void shell(const char* username);
 char* read_line(void);
 char** split_line(char* line);
 int my_system(char* const command);
-void chmod(char** args);
+void my_chmod(char** args);
 void find(char** args);
 void tee(char** args);
 void watch(char** args);
@@ -123,7 +127,7 @@ int my_system(char* const command) {
     pid = fork();
     if (pid == 0) {
         if (strcmp(args[0], "chmod") == 0) {
-            chmod(args);
+            my_chmod(args);
         } else if(strcmp(args[0], "find") == 0) {
             find(args);
         } else if(strcmp(args[0], "tee") == 0) {
@@ -226,12 +230,41 @@ char* login_handler(void) {
     }
 }
 
-void chmod(char** args) {
-    int i;
+void my_chmod(char** args) {
+    if (args[1] == NULL || args[2] == NULL) {
+        fprintf(stderr, RED "[sh]: chmod: missing operand\n" RESET);
+        return;
+    }
 
-    // That's how you'll go through the args list
-    for(i = 0 ; args[i] != NULL; i++) {
-        printf("argumnet on index %d : %s\n", i, args[i]);
+    char* endptr;
+    long mode = strtol(args[1], &endptr, 8);
+
+    if (*endptr != '\0' || mode < 0 || mode > 0777) {
+        fprintf(stderr, RED "[sh]: chmod: invalid mode: '%s'\n" RESET, args[1]);
+        return;
+    }
+
+    for (int i = 2; args[i] != NULL; i++) {
+        struct stat file_stat;
+        
+        if (stat(args[i], &file_stat) == -1) {
+            fprintf(stderr, RED "[sh]: chmod: cannot access '%s': %s\n" RESET, args[i], strerror(errno));
+            continue;
+        }
+
+        mode_t new_mode = (file_stat.st_mode & ~(S_IRWXU | S_IRWXG | S_IRWXO)) | ((mode_t)mode & 0777);
+
+        int fd = open(args[i], O_RDONLY);
+        if (fd == -1) {
+            fprintf(stderr, RED "[sh]: chmod: cannot open '%s': %s\n" RESET, args[i], strerror(errno));
+            continue;
+        }
+
+        if (fchmod(fd, new_mode) == -1) {
+            fprintf(stderr, RED "[sh]: chmod: cannot change permissions of '%s': %s\n" RESET, args[i], strerror(errno));
+        }
+
+        close(fd);
     }
 }
 
