@@ -9,6 +9,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <time.h>
 
 #define PIPE_READ 0
 #define PIPE_WRITE 1
@@ -457,7 +460,48 @@ int handle_pipe(char* command) {
 }
 
 void watch(char** args) {
-    printf("watch\n");
+    int interval = 2;
+    int command_start = 1;
+
+    if (args[1] != NULL && strcmp(args[1], "-n") == 0) {
+        if (args[2] != NULL) {
+            interval = atoi(args[2]);
+            if (interval <= 0) {
+                fprintf(stderr, RED "[sh]: invalid interval for -n\n" RESET);
+                return;
+            }
+            command_start = 3;
+        } else {
+            fprintf(stderr, RED "[sh]: -n requires an argument\n" RESET);
+            return;
+        }
+    }
+
+    if (args[command_start] == NULL || (
+        strcmp(args[command_start], "echo") != 0 && 
+        strcmp(args[command_start], "tee") != 0 && 
+        strcmp(args[command_start], "find") != 0 && 
+        strcmp(args[command_start], "chmod") != 0)) {
+        fprintf(stderr, RED "[sh]: watch only supports echo, tee, find, and chmod commands\n" RESET);
+        return;
+    }
+
+    char command[LINE_BUFSIZE] = "";
+    for (int i = command_start; args[i] != NULL; i++) {
+        strcat(command, args[i]);
+        if (args[i + 1] != NULL) {
+            strcat(command, " ");
+        }
+    }
+
+    printf("\033[2J\033[H");
+
+    while (1) {
+        printf("Every %ds: %s\n", interval, command);
+        my_system(command);
+        sleep(interval);
+        printf("\033[2J\033[H");
+    }
 }
 
 int main(int argc, char *argv[], char *env[]) {
