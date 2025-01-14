@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <dirent.h>
 
 #define PIPE_READ 0
 #define PIPE_WRITE 1
@@ -269,7 +270,60 @@ void my_chmod(char** args) {
 }
 
 void find(char** args) {
-    printf("find\n");
+    char *path = ".";
+    char *name = NULL;
+    char *type = NULL;
+
+    for (int i = 1; args[i] != NULL; i++) {
+        if (strcmp(args[i], "-name") == 0) {
+            if (args[i + 1] != NULL) {
+                name = args[i + 1];
+                i++;
+            } else {
+                fprintf(stderr, RED "[sh]: -name requires an argument\n" RESET);
+                return;
+            }
+        } else if (strcmp(args[i], "-type") == 0) {
+            if (args[i + 1] != NULL) {
+                type = args[i + 1];
+                i++;
+            } else {
+                fprintf(stderr, RED "[sh]: -type requires an argument\n" RESET);
+                return;
+            }
+        } else {
+            path = args[i];
+        }
+    }
+
+    DIR *dir = opendir(path);
+    if (dir == NULL) {
+        perror(RED "[sh]: cannot open directory" RESET);
+        return;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        if (name && strstr(entry->d_name, name) == NULL) continue;
+
+        if (type) {
+            struct stat st;
+            char fullpath[LINE_BUFSIZE];
+            snprintf(fullpath, LINE_BUFSIZE, "%s/%s", path, entry->d_name);
+
+            if (stat(fullpath, &st) == -1) continue;
+
+            if ((type[0] == 'd' && !S_ISDIR(st.st_mode)) || (type[0] == 'f' && !S_ISREG(st.st_mode))) {
+                continue;
+            }
+        }
+
+        printf("%s\n", entry->d_name);
+    }
+
+    closedir(dir);
 }
 
 void tee(char** args) {
