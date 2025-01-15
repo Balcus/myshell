@@ -478,9 +478,9 @@ void watch(char** args) {
     }
 
     if (args[command_start] == NULL || (
-        strcmp(args[command_start], "echo") != 0 && 
-        strcmp(args[command_start], "tee") != 0 && 
-        strcmp(args[command_start], "find") != 0 && 
+        strcmp(args[command_start], "echo") != 0 &&
+        strcmp(args[command_start], "tee") != 0 &&
+        strcmp(args[command_start], "find") != 0 &&
         strcmp(args[command_start], "chmod") != 0)) {
         fprintf(stderr, RED "[sh]: watch only supports echo, tee, find, and chmod commands\n" RESET);
         return;
@@ -494,13 +494,22 @@ void watch(char** args) {
         }
     }
 
-    printf("\033[2J\033[H");
-
     while (1) {
+        printf("\e[1;1H\e[2J");
         printf("Every %ds: %s\n", interval, command);
-        my_system(command);
+        FILE* fp = popen(command, "r");
+        if (fp == NULL) {
+            fprintf(stderr, RED "[sh]: failed to run command\n" RESET);
+            return;
+        }
+
+        char output[LINE_BUFSIZE];
+        while (fgets(output, sizeof(output), fp) != NULL) {
+            printf("%s", output);
+        }
+        pclose(fp);
+
         sleep(interval);
-        printf("\033[2J\033[H");
     }
 }
 
